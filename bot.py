@@ -1,6 +1,5 @@
 import os
 import asyncio
-import threading
 
 from flask import Flask, request
 
@@ -14,7 +13,6 @@ from telegram.ext import (
     Application,
     ChatJoinRequestHandler,
     CallbackQueryHandler,
-    CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
@@ -53,67 +51,122 @@ telegram_app = (
 
 
 # =========================================================
-# حلقة asyncio ثابتة
+# البيانات المؤقتة
 # =========================================================
 
-loop = asyncio.new_event_loop()
-
-
-def run_loop():
-    asyncio.set_event_loop(loop)
-    loop.run_forever()
-
-
-loop_thread = threading.Thread(
-    target=run_loop,
-    daemon=True
-)
-
-loop_thread.start()
-
-
-# =========================================================
-# بيانات مؤقتة
-# =========================================================
-
-# أسماء التلاميذ الذين سجلوا أسماءهم
-student_names = {}
-
-# طلبات الانضمام المعلقة
-# user_id -> قائمة بالمجموعات
+# user_id -> معلومات طلب الانضمام
 pending_requests = {}
 
 
 # =========================================================
-# /start
+# طلب انضمام جديد
 # =========================================================
 
-async def start_command(
+async def join_request(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    user = update.effective_user
+    join = update.chat_join_request
 
-    saved_name = student_names.get(user.id)
+    user = join.from_user
+    chat = join.chat
 
-    if saved_name:
+    username = (
+        f"@{user.username}"
+        if user.username
+        else "لا يوجد"
+    )
 
-        await update.message.reply_text(
-            f"✅ اسمك مسجل مسبقًا:\n\n"
-            f"👤 {saved_name}\n\n"
-            f"يمكنك الآن انتظار مراجعة الأستاذ."
+    # -----------------------------------------------------
+    # حفظ معلومات الطلب
+    # -----------------------------------------------------
+
+    pending_requests[user.id] = {
+        "chat_id": chat.id,
+        "chat_title": chat.title,
+        "user_chat_id": join.user_chat_id,
+    }
+
+
+    # -----------------------------------------------------
+    # إرسال الطلب للأستاذ
+    # -----------------------------------------------------
+
+    text = (
+        "🔔 <b>طلب انضمام جديد</b>\n\n"
+
+        f"👤 الاسم: <b>{user.full_name}</b>\n"
+        f"🔹 Username: {username}\n"
+        f"🆔 ID: <code>{user.id}</code>\n"
+        f"📚 المجموعة: <b>{chat.title}</b>\n\n"
+
+        "📝 الاسم واللقب: "
+        "<i>في انتظار التسجيل...</i>\n\n"
+
+        "هل تريد قبول هذا التلميذ؟"
+    )
+
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ قبول",
+                callback_data=(
+                    f"approve|{chat.id}|{user.id}"
+                )
+            ),
+
+            InlineKeyboardButton(
+                "❌ ارفض",
+                callback_data=(
+                    f"reject|{chat.id}|{user.id}"
+                )
+            )
+        ]
+    ])
+
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
+    # -----------------------------------------------------
+    # إرسال رسالة تلقائية للتلميذ
+    # -----------------------------------------------------
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=join.user_chat_id,
+
+            text=(
+                "👋 <b>مرحبًا بك</b>\n\n"
+
+                f"لقد استلمنا طلب انضمامك إلى:\n"
+                f"📚 <b>{chat.title}</b>\n\n"
+
+                "📝 من فضلك أرسل الآن "
+                "<b>اسمك ولقبك كاملًا</b>\n"
+                "كما هو مسجل لدى الأستاذ.\n\n"
+
+                "مثال:\n"
+                "<b>محمد أمين بن عيسى</b>"
+            ),
+
+            parse_mode="HTML"
         )
 
-        return
+    except Exception as e:
 
-    await update.message.reply_text(
-        "👋 مرحبًا بك في بوت الأستاذ بلخيري عبد الحميد.\n\n"
-        "📝 من فضلك أرسل الآن **اسمك ولقبك كاملًا** "
-        "كما هو مسجل لدى الأستاذ.\n\n"
-        "مثال:\n"
-        "محمد أمين بن عيسى"
-    )
+        print(
+            f"تعذر إرسال رسالة للتلميذ "
+            f"{user.id}: {e}"
+        )
 
 
 # =========================================================
@@ -129,25 +182,45 @@ async def receive_name(
 
     text = update.message.text.strip()
 
-    # تقسيم الاسم إلى كلمات
+    # -----------------------------------------------------
+    # التأكد أن التلميذ لديه طلب انضمام
+    # -----------------------------------------------------
+
+    if user.id not in pending_requests:
+
+        await update.message.reply_text(
+            "ℹ️ من فضلك أرسل طلب انضمام إلى إحدى "
+            "مجموعات الأستاذ أولًا."
+        )
+
+        return
+
+
+    # -----------------------------------------------------
+    # التأكد من وجود اسم ولقب
+    # -----------------------------------------------------
+
     words = text.split()
 
-    # يجب أن يحتوي على كلمتين على الأقل
     if len(words) < 2:
 
         await update.message.reply_text(
-            "❌ يرجى كتابة **الاسم واللقب كاملين**.\n\n"
+            "❌ يرجى كتابة الاسم واللقب كاملين.\n\n"
             "مثال:\n"
             "محمد أمين بن عيسى"
         )
 
         return
 
-    # حفظ الاسم
-    student_names[user.id] = text
 
-    # معرفة طلبات الانضمام الخاصة بهذا المستخدم
-    groups = pending_requests.get(user.id, [])
+    # -----------------------------------------------------
+    # معلومات الطلب
+    # -----------------------------------------------------
+
+    request_info = pending_requests[user.id]
+
+    chat_title = request_info["chat_title"]
+
 
     username = (
         f"@{user.username}"
@@ -155,28 +228,28 @@ async def receive_name(
         else "لا يوجد"
     )
 
-    if groups:
 
-        groups_text = "\n".join(
-            f"📚 {group_name}"
-            for group_name in groups
-        )
+    # -----------------------------------------------------
+    # إرسال بيانات التلميذ للأستاذ
+    # -----------------------------------------------------
 
-    else:
-
-        groups_text = "لا يوجد طلب انضمام حاليًا"
-
-    # إرسال المعلومات للأستاذ
     admin_text = (
-        "📝 <b>تم تسجيل بيانات تلميذ</b>\n\n"
-        f"👤 الاسم في Telegram: "
+        "📝 <b>بيانات تلميذ</b>\n\n"
+
+        f"👤 حساب Telegram: "
         f"<b>{user.full_name}</b>\n"
+
         f"🔹 Username: {username}\n"
+
         f"🆔 ID: <code>{user.id}</code>\n\n"
-        f"✏️ الاسم واللقب المسجل:\n"
+
+        f"📝 الاسم واللقب:\n"
         f"<b>{text}</b>\n\n"
-        f"{groups_text}"
+
+        f"📚 المجموعة:\n"
+        f"<b>{chat_title}</b>"
     )
+
 
     await context.bot.send_message(
         chat_id=ADMIN_ID,
@@ -184,114 +257,19 @@ async def receive_name(
         parse_mode="HTML"
     )
 
+
+    # -----------------------------------------------------
+    # الرد للتلميذ
+    # -----------------------------------------------------
+
     await update.message.reply_text(
         "✅ تم تسجيل اسمك ولقبك بنجاح.\n\n"
-        "⏳ يمكنك الآن انتظار مراجعة الأستاذ.\n"
-        "لن يتم قبولك أو رفضك تلقائيًا."
+        "⏳ طلب انضمامك الآن في انتظار مراجعة الأستاذ."
     )
 
 
 # =========================================================
-# طلب انضمام جديد
-# =========================================================
-
-async def join_request(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    request_join = update.chat_join_request
-
-    user = request_join.from_user
-
-    chat = request_join.chat
-
-    username = (
-        f"@{user.username}"
-        if user.username
-        else "لا يوجد"
-    )
-
-    # حفظ الطلب
-    if user.id not in pending_requests:
-        pending_requests[user.id] = []
-
-    if chat.title not in pending_requests[user.id]:
-
-        pending_requests[user.id].append(
-            chat.title
-        )
-
-    # الاسم المسجل مسبقًا إن وجد
-    saved_name = student_names.get(user.id)
-
-    if saved_name:
-
-        registered_text = (
-            f"📝 الاسم واللقب المسجل:\n"
-            f"<b>{saved_name}</b>\n\n"
-        )
-
-    else:
-
-        registered_text = (
-            "📝 الاسم واللقب المسجل:\n"
-            "⚠️ <b>لم يسجل بعد</b>\n\n"
-        )
-
-    # رابط البوت
-    bot_info = await context.bot.get_me()
-
-    bot_link = (
-        f"https://t.me/{bot_info.username}"
-    )
-
-    text = (
-        "🔔 <b>طلب انضمام جديد</b>\n\n"
-
-        f"👤 الاسم: <b>{user.full_name}</b>\n"
-        f"🔹 Username: {username}\n"
-        f"🆔 ID: <code>{user.id}</code>\n"
-        f"📚 المجموعة: <b>{chat.title}</b>\n\n"
-
-        f"{registered_text}"
-
-        "هل تريد قبول هذا التلميذ؟"
-    )
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "✅ قبول",
-                callback_data=(
-                    f"approve|{chat.id}|{user.id}"
-                )
-            ),
-            InlineKeyboardButton(
-                "❌ رفض",
-                callback_data=(
-                    f"reject|{chat.id}|{user.id}"
-                )
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📝 إرسال الاسم واللقب",
-                url=bot_link
-            )
-        ]
-    ])
-
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=text,
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-
-# =========================================================
-# أزرار قبول / رفض
+# قبول / رفض
 # =========================================================
 
 async def button_handler(
@@ -301,7 +279,11 @@ async def button_handler(
 
     query = update.callback_query
 
+
+    # -----------------------------------------------------
     # التأكد أن الزر للأستاذ
+    # -----------------------------------------------------
+
     if query.from_user.id != ADMIN_ID:
 
         await query.answer(
@@ -311,24 +293,22 @@ async def button_handler(
 
         return
 
+
     await query.answer()
 
-    try:
 
-        action, chat_id, user_id = (
-            query.data.split("|")
-        )
+    # -----------------------------------------------------
+    # قراءة بيانات الزر
+    # -----------------------------------------------------
 
-        chat_id = int(chat_id)
-        user_id = int(user_id)
+    action, chat_id, user_id = (
+        query.data.split("|")
+    )
 
-    except Exception:
+    chat_id = int(chat_id)
 
-        await query.edit_message_text(
-            "❌ حدث خطأ في بيانات الطلب."
-        )
+    user_id = int(user_id)
 
-        return
 
     # =====================================================
     # قبول
@@ -336,23 +316,15 @@ async def button_handler(
 
     if action == "approve":
 
-        try:
+        await context.bot.approve_chat_join_request(
+            chat_id=chat_id,
+            user_id=user_id
+        )
 
-            await context.bot.approve_chat_join_request(
-                chat_id=chat_id,
-                user_id=user_id
-            )
+        await query.edit_message_text(
+            "✅ تم قبول طلب الانضمام."
+        )
 
-            await query.edit_message_text(
-                "✅ تم قبول طلب الانضمام."
-            )
-
-        except Exception as e:
-
-            await query.edit_message_text(
-                f"❌ تعذر قبول الطلب.\n\n"
-                f"{e}"
-            )
 
     # =====================================================
     # رفض
@@ -360,35 +332,22 @@ async def button_handler(
 
     elif action == "reject":
 
-        try:
+        await context.bot.decline_chat_join_request(
+            chat_id=chat_id,
+            user_id=user_id
+        )
 
-            await context.bot.decline_chat_join_request(
-                chat_id=chat_id,
-                user_id=user_id
-            )
-
-            await query.edit_message_text(
-                "❌ تم رفض طلب الانضمام."
-            )
-
-        except Exception as e:
-
-            await query.edit_message_text(
-                f"❌ تعذر رفض الطلب.\n\n"
-                f"{e}"
-            )
+        await query.edit_message_text(
+            "❌ تم رفض طلب الانضمام."
+        )
 
 
 # =========================================================
-# إضافة Handlers
+# Handlers
 # =========================================================
 
 telegram_app.add_handler(
     ChatJoinRequestHandler(join_request)
-)
-
-telegram_app.add_handler(
-    CommandHandler("start", start_command)
 )
 
 telegram_app.add_handler(
@@ -404,7 +363,7 @@ telegram_app.add_handler(
 
 
 # =========================================================
-# تهيئة Telegram
+# تهيئة البوت
 # =========================================================
 
 async def initialize_bot():
@@ -420,20 +379,13 @@ async def initialize_bot():
         )
 
         print(
-            f"Webhook set to: "
+            f"Webhook set: "
             f"{WEBHOOK_URL}/webhook"
         )
 
-    print("Telegram bot started successfully.")
-
-
-# تشغيل Telegram على الحلقة الثابتة
-future = asyncio.run_coroutine_threadsafe(
-    initialize_bot(),
-    loop
-)
-
-future.result()
+    print(
+        "🤖 botAdmition is running!"
+    )
 
 
 # =========================================================
@@ -450,43 +402,33 @@ def home():
 # Webhook
 # =========================================================
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
+@app.route(
+    "/webhook",
+    methods=["POST"]
+)
+async def webhook():
 
-    try:
+    data = request.get_json(force=True)
 
-        data = request.get_json(force=True)
+    update = Update.de_json(
+        data,
+        telegram_app.bot
+    )
 
-        update = Update.de_json(
-            data,
-            telegram_app.bot
-        )
+    await telegram_app.process_update(update)
 
-        # إرسال المعالجة إلى Event Loop الثابت
-        future = asyncio.run_coroutine_threadsafe(
-            telegram_app.process_update(update),
-            loop
-        )
-
-        # ننتظر انتهاء معالجة الطلب
-        future.result(timeout=30)
-
-        return "OK", 200
-
-    except Exception as e:
-
-        print(
-            f"Webhook error: {e}"
-        )
-
-        return "ERROR", 500
+    return "OK"
 
 
 # =========================================================
-# تشغيل Flask
+# التشغيل
 # =========================================================
 
 if __name__ == "__main__":
+
+    asyncio.run(
+        initialize_bot()
+    )
 
     app.run(
         host="0.0.0.0",
