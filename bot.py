@@ -1,28 +1,29 @@
 import os
-
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     ChatJoinRequestHandler,
     CallbackQueryHandler,
-    ContextTypes,
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
-
 ADMIN_ID = 5175833485
 
+PORT = int(os.getenv("PORT", "10000"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-async def join_request(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    request = update.chat_join_request
+app = Flask(__name__)
 
-    user = request.from_user
-    chat = request.chat
+telegram_app = Application.builder().token(TOKEN).build()
 
-    name = user.full_name
+
+async def join_request(update: Update, context):
+    request_join = update.chat_join_request
+
+    user = request_join.from_user
+    chat = request_join.chat
+
     username = (
         f"@{user.username}"
         if user.username
@@ -31,8 +32,8 @@ async def join_request(
 
     text = (
         "🔔 <b>طلب انضمام جديد</b>\n\n"
-        f"👤 الاسم: <b>{name}</b>\n"
-        f"🔹 username: {username}\n"
+        f"👤 الاسم: <b>{user.full_name}</b>\n"
+        f"🔹 Username: {username}\n"
         f"🆔 ID: <code>{user.id}</code>\n"
         f"📚 المجموعة: <b>{chat.title}</b>\n\n"
         "هل تريد قبول هذا التلميذ؟"
@@ -59,13 +60,9 @@ async def join_request(
     )
 
 
-async def button_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def button_handler(update: Update, context):
     query = update.callback_query
 
-    # السماح لك أنت فقط بالضغط على الأزرار
     if query.from_user.id != ADMIN_ID:
         await query.answer(
             "❌ هذا الزر خاص بالأستاذ.",
@@ -75,11 +72,10 @@ async def button_handler(
 
     await query.answer()
 
-    data = query.data.split("|")
+    action, chat_id, user_id = query.data.split("|")
 
-    action = data[0]
-    chat_id = int(data[1])
-    user_id = int(data[2])
+    chat_id = int(chat_id)
+    user_id = int(user_id)
 
     if action == "approve":
 
@@ -104,32 +100,49 @@ async def button_handler(
         )
 
 
-def main():
+telegram_app.add_handler(
+    ChatJoinRequestHandler(join_request)
+)
 
-    if not TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN غير موجود"
-        )
+telegram_app.add_handler(
+    CallbackQueryHandler(button_handler)
+)
 
-    app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(
-        ChatJoinRequestHandler(join_request)
+@app.route("/")
+def home():
+    return "🤖 botAdmition is running!"
+
+
+@app.route("/webhook", methods=["POST"])
+async def webhook():
+    data = request.get_json(force=True)
+
+    update = Update.de_json(
+        data,
+        telegram_app.bot
     )
 
-    app.add_handler(
-        CallbackQueryHandler(button_handler)
-    )
+    await telegram_app.process_update(update)
 
-    print("🤖 Bot is running...")
-
-    app.run_polling(
-        allowed_updates=[
-            "chat_join_request",
-            "callback_query"
-        ]
-    )
+    return "OK"
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+
+    async def start_bot():
+        await telegram_app.initialize()
+        await telegram_app.start()
+
+        if WEBHOOK_URL:
+            await telegram_app.bot.set_webhook(
+                url=f"{WEBHOOK_URL}/webhook"
+            )
+
+    asyncio.run(start_bot())
+
+    app.run(
+        host="0.0.0.0",
+        port=PORT
+    )
