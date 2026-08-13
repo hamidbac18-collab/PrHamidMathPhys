@@ -1,4 +1,5 @@
 import os
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,24 +10,31 @@ from telegram.ext import (
 
 TOKEN = os.getenv("BOT_TOKEN")
 
+ADMIN_ID = 5175833485
 
-async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def join_request(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     request = update.chat_join_request
 
     user = request.from_user
     chat = request.chat
 
     name = user.full_name
-    username = f"@{user.username}" if user.username else "لا يوجد"
-    user_id = user.id
-    group_name = chat.title
+    username = (
+        f"@{user.username}"
+        if user.username
+        else "لا يوجد"
+    )
 
     text = (
         "🔔 <b>طلب انضمام جديد</b>\n\n"
         f"👤 الاسم: <b>{name}</b>\n"
-        f"🔹 المعرف: {username}\n"
-        f"🆔 ID: <code>{user_id}</code>\n"
-        f"📚 المجموعة: <b>{group_name}</b>\n\n"
+        f"🔹 username: {username}\n"
+        f"🆔 ID: <code>{user.id}</code>\n"
+        f"📚 المجموعة: <b>{chat.title}</b>\n\n"
         "هل تريد قبول هذا التلميذ؟"
     )
 
@@ -34,35 +42,47 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton(
                 "✅ قبول",
-                callback_data=f"approve:{chat.id}:{user_id}"
+                callback_data=f"approve|{chat.id}|{user.id}"
             ),
             InlineKeyboardButton(
                 "❌ رفض",
-                callback_data=f"reject:{chat.id}:{user_id}"
+                callback_data=f"reject|{chat.id}|{user.id}"
             )
         ]
     ])
 
-    # في النسخة الأولى سنرسل الطلب إلى حساب تشغيل البوت
-    # لاحقًا نحدد حساب الأستاذ بشكل ثابت.
     await context.bot.send_message(
-        chat_id=user_id,
+        chat_id=ADMIN_ID,
         text=text,
         parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
+
+    # السماح لك أنت فقط بالضغط على الأزرار
+    if query.from_user.id != ADMIN_ID:
+        await query.answer(
+            "❌ هذا الزر خاص بالأستاذ.",
+            show_alert=True
+        )
+        return
+
     await query.answer()
 
-    data = query.data.split(":")
+    data = query.data.split("|")
+
     action = data[0]
     chat_id = int(data[1])
     user_id = int(data[2])
 
     if action == "approve":
+
         await context.bot.approve_chat_join_request(
             chat_id=chat_id,
             user_id=user_id
@@ -73,6 +93,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif action == "reject":
+
         await context.bot.decline_chat_join_request(
             chat_id=chat_id,
             user_id=user_id
@@ -84,6 +105,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+
+    if not TOKEN:
+        raise RuntimeError(
+            "BOT_TOKEN غير موجود"
+        )
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(
@@ -94,9 +121,13 @@ def main():
         CallbackQueryHandler(button_handler)
     )
 
-    print("Bot is running...")
+    print("🤖 Bot is running...")
+
     app.run_polling(
-        allowed_updates=["chat_join_request", "callback_query"]
+        allowed_updates=[
+            "chat_join_request",
+            "callback_query"
+        ]
     )
 
 
