@@ -201,6 +201,7 @@ async def join_request(
 
                 "✅ سيتم قبول طلبك بشرط أن تكون "
                 "<b>تلميذًا تدرس مع الأستاذ في القسم</b>."
+
             ),
 
             parse_mode="HTML"
@@ -219,6 +220,7 @@ async def join_request(
 
 # =========================================================
 # استقبال الاسم واللقب
+# يعمل في الخاص فقط
 # =========================================================
 
 async def receive_name(
@@ -227,6 +229,16 @@ async def receive_name(
 ):
 
     if not update.message:
+
+        return
+
+
+    # =====================================================
+    # مهم جدًا:
+    # تجاهل أي رسالة ليست في الخاص
+    # =====================================================
+
+    if update.effective_chat.type != "private":
 
         return
 
@@ -258,40 +270,8 @@ async def receive_name(
 
         await update.message.reply_text(
 
-            "✅ تم استلام رسالتك.\n\n"
+            "ℹ️ أرسل طلب انضمام إلى المجموعة أولًا."
 
-            "⏳ طلبك قيد المراجعة، "
-            "وقد يتأخر الرد لأن الأستاذ مشغول دائمًا "
-            "ولا يفتح Telegram بشكل متكرر.\n\n"
-
-            "📞 إذا طال الانتظار يمكنك التواصل مع الأستاذ:\n"
-
-            "0669457344"
-
-        )
-
-
-        await context.bot.send_message(
-
-            chat_id=ADMIN_ID,
-
-            text=(
-
-                "📝 <b>رسالة من تلميذ</b>\n\n"
-
-                f"👤 حساب Telegram: "
-                f"<b>{user.full_name}</b>\n"
-
-                f"🆔 ID: <code>{user.id}</code>\n\n"
-
-                f"📝 الاسم واللقب الذي أرسله:\n"
-                f"<b>{text}</b>\n\n"
-
-                "⚠️ لم يتم العثور على بيانات طلب "
-                "الانضمام في ذاكرة البوت."
-            ),
-
-            parse_mode="HTML"
         )
 
         return
@@ -540,6 +520,7 @@ async def button_handler(
 
                             "🔷 <b>Facebook / Messenger:</b>\n"
                             "https://www.facebook.com/share/16DxuqTuvhn/"
+
                         ),
 
                         parse_mode="HTML"
@@ -627,6 +608,7 @@ async def button_handler(
 
                             "🔷 <b>Facebook / Messenger:</b>\n"
                             "https://www.facebook.com/share/16DxuqTuvhn/"
+
                         ),
 
                         parse_mode="HTML"
@@ -669,6 +651,7 @@ async def button_handler(
 # إضافة Handlers
 # =========================================================
 
+# طلبات الانضمام
 telegram_app.add_handler(
 
     ChatJoinRequestHandler(
@@ -678,6 +661,7 @@ telegram_app.add_handler(
 )
 
 
+# أزرار القبول والرفض
 telegram_app.add_handler(
 
     CallbackQueryHandler(
@@ -687,11 +671,21 @@ telegram_app.add_handler(
 )
 
 
+# =========================================================
+# استقبال رسائل التلميذ
+#
+# مهم:
+# يعمل في الخاص فقط
+# ولا يستقبل رسائل الجروبات
+# =========================================================
+
 telegram_app.add_handler(
 
     MessageHandler(
 
-        filters.TEXT & ~filters.COMMAND,
+        filters.ChatType.PRIVATE
+        & filters.TEXT
+        & ~filters.COMMAND,
 
         receive_name
 
