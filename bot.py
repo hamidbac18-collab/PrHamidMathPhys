@@ -4,16 +4,9 @@ import threading
 
 from flask import Flask, request
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-
+from telegram import Update
 from telegram.ext import (
     Application,
-    ChatJoinRequestHandler,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
 )
@@ -24,8 +17,6 @@ from telegram.ext import (
 # =========================================================
 
 TOKEN = os.getenv("BOT_TOKEN")
-
-ADMIN_ID = 5175833485
 
 PORT = int(os.getenv("PORT", "10000"))
 
@@ -40,7 +31,7 @@ app = Flask(__name__)
 
 
 # =========================================================
-# Telegram Application
+# Telegram
 # =========================================================
 
 telegram_app = (
@@ -52,17 +43,7 @@ telegram_app = (
 
 
 # =========================================================
-# معلومات طلبات الانضمام
-# =========================================================
-
-pending_requests = {}
-
-
-# =========================================================
 # أمر /id
-# =========================================================
-# أرسل /id داخل المجموعة
-# وسيعطيك Chat ID الخاص بالمجموعة.
 # =========================================================
 
 async def get_id(
@@ -70,347 +51,44 @@ async def get_id(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    chat = update.effective_chat
-
-    if not chat:
-        return
-
-    # فقط الأستاذ يستطيع استعمال الأمر
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    chat_id = chat.id
-
-    chat_title = chat.title or "بدون اسم"
-
-    await update.message.reply_text(
-        "🆔 <b>Chat ID:</b>\n"
-        f"<code>{chat_id}</code>\n\n"
-        "📚 <b>اسم المجموعة:</b>\n"
-        f"{chat_title}",
-        parse_mode="HTML"
-    )
-
-
-# =========================================================
-# استقبال طلبات الانضمام
-# =========================================================
-
-async def join_request(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    request_join = update.chat_join_request
-
-    user = request_join.from_user
-
-    chat = request_join.chat
-
-
-    # =====================================================
-    # حفظ معلومات الطلب
-    # =====================================================
-
-    pending_requests[user.id] = {
-        "user_chat_id": user.id,
-        "chat_id": chat.id,
-        "chat_title": chat.title or "المجموعة",
-        "user_name": user.full_name,
-        "username": user.username,
-    }
-
-
-    # =====================================================
-    # معلومات المستخدم
-    # =====================================================
-
-    username = (
-        f"@{user.username}"
-        if user.username
-        else "لا يوجد"
-    )
-
-
-    text = (
-        "🔔 <b>طلب انضمام جديد</b>\n\n"
-        f"👤 الاسم: <b>{user.full_name}</b>\n"
-        f"🔹 Username: {username}\n"
-        f"🆔 ID: <code>{user.id}</code>\n"
-        f"📚 المجموعة: <b>{chat.title}</b>\n\n"
-        "هل تريد قبول هذا التلميذ؟"
-    )
-
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "✅ قبول",
-                callback_data=(
-                    f"approve|{chat.id}|{user.id}"
-                )
-            ),
-
-            InlineKeyboardButton(
-                "❌ رفض",
-                callback_data=(
-                    f"reject|{chat.id}|{user.id}"
-                )
-            )
-        ]
-    ])
-
-
     try:
 
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard
+        chat = update.effective_chat
+        user = update.effective_user
+
+        if not chat:
+            print("❌ لا يوجد Chat")
+            return
+
+        print("================================")
+        print("📩 تم استلام أمر /id")
+        print(f"👤 المستخدم: {user.full_name}")
+        print(f"👤 User ID: {user.id}")
+        print(f"💬 Chat ID: {chat.id}")
+        print(f"💬 Chat Type: {chat.type}")
+        print(f"💬 Chat Title: {chat.title}")
+        print("================================")
+
+
+        await update.message.reply_text(
+            "🆔 <b>Chat ID:</b>\n\n"
+            f"<code>{chat.id}</code>\n\n"
+            "📚 <b>اسم المجموعة:</b>\n"
+            f"{chat.title or 'بدون اسم'}",
+            parse_mode="HTML"
         )
+
 
     except Exception as e:
 
         print(
-            "خطأ في إرسال طلب الانضمام للأستاذ:",
-            repr(e)
+            f"❌ خطأ في /id: {repr(e)}"
         )
 
 
 # =========================================================
-# زر القبول والرفض
+# إضافة الأمر
 # =========================================================
-
-async def button_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-
-
-    # =====================================================
-    # التأكد أن الزر للأستاذ
-    # =====================================================
-
-    if query.from_user.id != ADMIN_ID:
-
-        await query.answer(
-            "❌ هذا الزر خاص بالأستاذ.",
-            show_alert=True
-        )
-
-        return
-
-
-    await query.answer()
-
-
-    # =====================================================
-    # استخراج البيانات
-    # =====================================================
-
-    try:
-
-        action, chat_id, user_id = (
-            query.data.split("|")
-        )
-
-        chat_id = int(chat_id)
-
-        user_id = int(user_id)
-
-    except Exception:
-
-        await query.edit_message_text(
-            "❌ بيانات الطلب غير صحيحة."
-        )
-
-        return
-
-
-    # =====================================================
-    # معلومات الطلب
-    # =====================================================
-
-    request_info = pending_requests.get(
-        user_id
-    )
-
-
-    user_chat_id = None
-
-    chat_title = "المجموعة"
-
-
-    if request_info:
-
-        user_chat_id = request_info.get(
-            "user_chat_id"
-        )
-
-        chat_title = request_info.get(
-            "chat_title",
-            "المجموعة"
-        )
-
-
-    # =====================================================
-    # قبول
-    # =====================================================
-
-    if action == "approve":
-
-        try:
-
-            await context.bot.approve_chat_join_request(
-                chat_id=chat_id,
-                user_id=user_id
-            )
-
-
-            # -------------------------------------------------
-            # رسالة للتلميذ
-            # -------------------------------------------------
-
-            if user_chat_id:
-
-                try:
-
-                    await context.bot.send_message(
-                        chat_id=user_chat_id,
-                        text=(
-                            "✅ <b>تم قبول طلب انضمامك</b>\n\n"
-                            f"📚 المجموعة: "
-                            f"<b>{chat_title}</b>\n\n"
-                            "مرحبًا بك معنا 🌷"
-                        ),
-                        parse_mode="HTML"
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "تعذر إرسال رسالة القبول "
-                        f"للتلميذ {user_id}: {repr(e)}"
-                    )
-
-
-            # -------------------------------------------------
-            # تغيير رسالة الأستاذ
-            # -------------------------------------------------
-
-            await query.edit_message_text(
-                "✅ تم قبول طلب الانضمام.\n"
-                "📨 وتم إرسال رسالة للتلميذ."
-            )
-
-
-            # -------------------------------------------------
-            # حذف الطلب من الذاكرة
-            # -------------------------------------------------
-
-            pending_requests.pop(
-                user_id,
-                None
-            )
-
-
-        except Exception as e:
-
-            await query.edit_message_text(
-                f"❌ تعذر قبول الطلب.\n\n{e}"
-            )
-
-
-    # =====================================================
-    # رفض
-    # =====================================================
-
-    elif action == "reject":
-
-        try:
-
-            await context.bot.decline_chat_join_request(
-                chat_id=chat_id,
-                user_id=user_id
-            )
-
-
-            # -------------------------------------------------
-            # رسالة للتلميذ
-            # -------------------------------------------------
-
-            if user_chat_id:
-
-                try:
-
-                    await context.bot.send_message(
-                        chat_id=user_chat_id,
-                        text=(
-                            "❌ <b>نعتذر منك</b>\n\n"
-                            f"تم رفض طلب انضمامك إلى:\n"
-                            f"📚 <b>{chat_title}</b>\n\n"
-                            "إذا كان هناك خطأ، "
-                            "يمكنك التواصل مع الأستاذ."
-                        ),
-                        parse_mode="HTML"
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "تعذر إرسال رسالة الرفض "
-                        f"للتلميذ {user_id}: {repr(e)}"
-                    )
-
-
-            # -------------------------------------------------
-            # تغيير رسالة الأستاذ
-            # -------------------------------------------------
-
-            await query.edit_message_text(
-                "❌ تم رفض طلب الانضمام.\n"
-                "📨 وتم إرسال رسالة للتلميذ."
-            )
-
-
-            # -------------------------------------------------
-            # حذف الطلب من الذاكرة
-            # -------------------------------------------------
-
-            pending_requests.pop(
-                user_id,
-                None
-            )
-
-
-        except Exception as e:
-
-            await query.edit_message_text(
-                f"❌ تعذر رفض الطلب.\n\n{e}"
-            )
-
-
-# =========================================================
-# إضافة Handlers
-# =========================================================
-
-telegram_app.add_handler(
-    ChatJoinRequestHandler(
-        join_request
-    )
-)
-
-
-telegram_app.add_handler(
-    CallbackQueryHandler(
-        button_handler,
-        pattern=r"^(approve|reject)\|"
-    )
-)
-
 
 telegram_app.add_handler(
     CommandHandler(
@@ -427,15 +105,19 @@ telegram_app.add_handler(
 @app.route("/")
 def home():
 
-    return "🤖 botAdmition is running!"
+    return "🤖 ID Bot is running!"
+
+
+# =========================================================
+# Event Loop
+# =========================================================
+
+BOT_LOOP = asyncio.new_event_loop()
 
 
 # =========================================================
 # Webhook
 # =========================================================
-
-BOT_LOOP = asyncio.new_event_loop()
-
 
 @app.route(
     "/webhook",
@@ -443,31 +125,38 @@ BOT_LOOP = asyncio.new_event_loop()
 )
 def webhook():
 
-    data = request.get_json(
-        force=True
-    )
+    try:
 
+        data = request.get_json(
+            force=True
+        )
 
-    update = Update.de_json(
-        data,
-        telegram_app.bot
-    )
+        update = Update.de_json(
+            data,
+            telegram_app.bot
+        )
 
+        asyncio.run_coroutine_threadsafe(
+            telegram_app.process_update(update),
+            BOT_LOOP
+        )
 
-    asyncio.run_coroutine_threadsafe(
-        telegram_app.process_update(update),
-        BOT_LOOP
-    )
+        return "OK"
 
+    except Exception as e:
 
-    return "OK"
+        print(
+            f"❌ Webhook error: {repr(e)}"
+        )
+
+        return "ERROR", 500
 
 
 # =========================================================
-# تشغيل البوت
+# تشغيل Telegram
 # =========================================================
 
-def run_bot_loop():
+def run_bot():
 
     asyncio.set_event_loop(
         BOT_LOOP
@@ -485,7 +174,7 @@ def run_bot_loop():
 
 
     # -----------------------------------------------------
-    # إعداد Webhook
+    # Webhook
     # -----------------------------------------------------
 
     if WEBHOOK_URL:
@@ -494,21 +183,19 @@ def run_bot_loop():
             f"{WEBHOOK_URL}/webhook"
         )
 
-
         BOT_LOOP.run_until_complete(
             telegram_app.bot.set_webhook(
                 url=webhook_url
             )
         )
 
-
         print(
-            f"Webhook set to: {webhook_url}"
+            f"🌐 Webhook set to: {webhook_url}"
         )
 
 
     print(
-        "🤖 Telegram bot started successfully."
+        "🤖 ID Bot started successfully!"
     )
 
 
@@ -516,18 +203,17 @@ def run_bot_loop():
 
 
 # =========================================================
-# تشغيل Flask
+# تشغيل البرنامج
 # =========================================================
 
 if __name__ == "__main__":
 
-    bot_thread = threading.Thread(
-        target=run_bot_loop,
+    thread = threading.Thread(
+        target=run_bot,
         daemon=True
     )
 
-
-    bot_thread.start()
+    thread.start()
 
 
     print(
